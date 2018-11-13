@@ -1,0 +1,8 @@
+PRSC Ver 0.1
+Name 合约名称
+Desc 这是\n测试合约
+Receiver becd34540fefeab83730ffb479e98ee12fa1337e
+Use 1b48260cb790d4a6fad321333cd3625585f602fa58d2541bceb25eb480fab3da :license-type Personal :arg1 arg1
+Use 1b48260cb790d4a6fad321333cd3625585f602fa58d2541bceb25eb480fab3dc :license-type Commercial :arg1 arg1
+License Useage01 PRS:0.0013 Terms: 这是个人使用条款，禁止\n商业应用。
+License Commercial PRS:0.0035 Terms: 这是商业使用条款，允许\n修改和复制。
