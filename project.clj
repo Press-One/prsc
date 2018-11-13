@@ -1,8 +1,8 @@
 (defproject prsc "0.1.0-SNAPSHOT"
-  :description "PRS light contract interpreter"
+  :description "PRS DSL script interpreter"
   :url "https://press.one"
-  :license {:name "Eclipse Public License"
-            :url "http://www.eclipse.org/legal/epl-v10.html"}
+  :license {:name "MIT"
+            :url "https://opensource.org/licenses/MIT"}
   :main prsc.core
   :aot [prsc.core]
   :profiles {:uberjar {:aot :all}
