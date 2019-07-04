@@ -1,3 +1,4 @@
-{:apiroot "https://press.one/api"
+{:apiroot "https://press.one/api/v2"
 :p1s "https://static.press.one/"
+:privkey "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 }

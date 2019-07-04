@@ -1,6 +1,7 @@
 (ns prsc.core
   (:gen-class)
-  (:require [config.core :refer [env]]
+  (:require [prsc.crypto :refer :all]
+            [config.core :refer [env]]
             [clojure.data.json :as json]
             [compojure.api.sweet :refer :all]
             [compojure.route :as route]
@@ -26,6 +27,12 @@
 
 (defrecord Receiver [address])
 
+(defrecord Deposit [service address currency price total unlock])
+
+(defrecord multi-receiver [address currency p])
+
+(defrecord Principals [address])
+
 (defrecord license-type [name])
 
 (defrecord Linked-license [address type currency price])
@@ -34,8 +41,11 @@
 
 (defrecord Linked-Contract-List [rid args])
 
+(defrecord Enabledfuncs [name])
+
 (defn formatdesc [& thedesc]
   [:desc (clojure.string/trim (apply str thedesc))])
+
 (defn formatname [& thename]
   [:name (clojure.string/trim (apply str thename))])
 
@@ -58,17 +68,33 @@
                 :lhs [{:type license-type
                        :constraints [(list = (symbol "name") thetype)]}]
                 :rhs `(insert! (->ContractText ~thetype ~text))})
+   :deposit (fn [depositservice address currency price total unlock]
+              {:name "deposit"
+               :lhs ()
+               :rhs `(process-deposit ~depositservice ~address ~currency ~price ~total ~unlock)})
+   :principals (fn [& principallist]
+                 {:name "principals"
+                  :lhs ()
+                  :rhs `(process-principals (apply list '~principallist))})
    :receiver (fn [address]
                {:name "receiver"
                 :lhs ()
                 :rhs `(insert! (->Receiver ~address))})
+   :multireceiver (fn [& receiverlist]
+                    {:name "multireceiver"
+                     :lhs ()
+                     :rhs `(parsemultireceiver (apply list '~receiverlist))})
    :price (comp str read-string)
    :currency read-string
+   :depositservice read-string
    :use (fn [rid args]
           {:name rid
            :lhs []
            :rhs `(insert! (->Linked-Contract-List ~rid ~args))})
-
+   :func (fn [& funclist]
+           {:name "func"
+            :lhs ()
+            :rhs `(process-funcs (apply list '~funclist))})
    :license (fn [thetype currency price termtext]
               {:name thetype
                :lhs [{:type license-type
@@ -85,19 +111,27 @@
  ;args nl
 (def prscparser
   (insta/parser
-   "<statement> = [version | assign | receiver | license | contract | pay | name | desc | use]+
+   "<statement> = [version | assign | receiver | license | contract | pay | desc | use | holder | multireceiver | name | deposit | principals | func]+
     version = <'PRSC Ver'> space vernum;
     vernum = float;
     assign = <'let'> varname <'='> [ address | string | utf8str ] nl
     receiver = <'Receiver'> address
     name = <'Name'> space utf8stre
+    multireceiver = <'MultiReceiver'> receiver_info+
+    holder = <'Holder'> address
+    deposit = <'Deposit'> depositservice <':'> string <'Principal'> currency <':'> price <'Total'> <':'> digit <'Unlock'> <':'> digit
     desc = <'Desc'> space utf8stre
+    principals = <'Principals'> space address+
+    func = <'Func'> space string+
     license  = <'License'> licensetype currency <':'> price  <'Terms'> <':'> [ address | string | utf8stre ]
     contract = <'Contract'> licensetype [ address | string | utf8stre ]
     pay = <'Pay'> msghash licensetype currency <':'> price
-		use = <'Use'> rid args
+    receiver_info = address [(currency <':'> price) | percent]
+	use = <'Use'> rid args
     price = float;
+    <percent> = #'[0-9]\\d?(?:\\.\\d{1,2})?%';
     <currency> = 'PRS' | 'CNB';
+    <depositservice> = 'XIN';
     <varname> = string;
 		<args> = utf8str;
     <string> = #'[A-Za-z0-9_-]+';
@@ -117,6 +151,32 @@
 (defn print-ver [input]
   (println (str "version: " input)))
 
+(defn process-deposit [depositservice address currency price total unlock]
+  (if (and (= "XIN" depositservice) (uuid? (java.util.UUID/fromString address)))
+    (insert! (->Deposit depositservice address currency price total unlock))
+    (throw (Exception. "deposit service or address format error."))))
+
+(defn parsemultireceiver [& receiverlist]
+;verify: not more than 100%
+  (let [sumshares (apply + (map (fn [x]
+                                  (read-string (if (= 3 (count x)) (clojure.string/replace (nth x 2 "0") #"%" "") "0"))) (first receiverlist)))]
+    (if-not
+     (= 0.0 (- 100.00 sumshares))
+      (throw (Exception. (str "the sum of receiver shares should equal 100%, current: " sumshares "%")))
+      (doall (map (fn [x]
+                    (if (= 3 (count x))
+                      (insert! (->multi-receiver (nth x 1 "0") "nil" (nth x 2 "0")))
+                      (insert! (->multi-receiver (nth x 1 "0") (nth x 2 "0") (nth x 3 "0"))))) (first receiverlist))))))
+
+(defn process-principals [& principallist]
+  (doall (map (fn [x]
+                (insert! (->Principals x)))  (first principallist))))
+
+(defn process-funcs [& funcs]
+  (doall (map (fn [x]
+                (println x)
+                (insert! (->Enabledfuncs x)))  (first funcs))))
+
 (defn prscparse [input]
   (->> (prscparser input) (insta/transform prsctransform-options)))
 
@@ -124,8 +184,7 @@
   "Returns the available license"
   []
   [?receiver <- Receiver]
-  [?license <- LicenseTerm]
-  )
+  [?license <- LicenseTerm])
 
 (defquery get-linked-license
   "Returns the linked license"
@@ -147,6 +206,26 @@
   []
   [?linkedContracts <- Linked-Contract-List])
 
+(defquery get-multireceivers
+  "Returns multi receivers"
+  []
+  [?MultiReceivers <- multi-receiver])
+
+(defquery get-principals
+  "Returns multi receivers"
+  []
+  [?Principal <- Principals])
+
+(defquery get-funcs
+  "Returns multi receivers"
+  []
+  [?Func <- Enabledfuncs])
+
+(defquery get-deposit
+  "Returns the despoit info"
+  []
+  [?Deposit <- Deposit])
+
 (s/defn ^:always-validate load-user-rules :- [clara.rules.schema/Production]
   [business-rules :- s/Str]
 
@@ -157,15 +236,22 @@
 
     (insta/transform prsctransform-options parse-tree)))
 
-(defn fetchContractCodeWithrID [rid]
-  (let [resp (http/get (str (:apiroot env) "/blocks/txes?rIds=" rid))]
+(defn fetchContractCodeWithrID [contract_id]
+  (let [resp (http/get (str (:apiroot env) "/contracts/" contract_id))]
     (let [block (parse-string (:body @resp) true)]
-      (let [contract (parse-string (:data (first (:txes (:data block)))) true)]
-        (:code contract)))))
+      (:code (:contract block)))))
 
 (defn -main [& args]
-  (update-global :level 0)
+  ;;  (update-global :level 0)
+
+
   (if (= true ((complement nil?) (first *command-line-args*)))
+
+    ;;(let [arg (clojure.string/trim (first *command-line-args*))]
+    ;;    (if (= "createkeys" arg)
+    ;;        (println (test-sign "test crypto"))
+    ;;        (System/exit 0)
+    ;;))
     (let [rid (clojure.string/trim (first *command-line-args*))]
       (let [contractcode (cond (= 64 (count rid))
                                (fetchContractCodeWithrID rid)
@@ -181,7 +267,14 @@
             (let [result (query session get-license)]
               (clojure.pprint/pprint result))
             (let [result (apply query [session get-linked-Contracts])]
-              (clojure.pprint/pprint result)))
+              (clojure.pprint/pprint result))
+            (let [result (apply query [session get-multireceivers])]
+              (clojure.pprint/pprint result))
+            (let [result (apply query [session get-deposit])]
+              (clojure.pprint/pprint result))
+            (let [result (apply query [session get-principals])]
+              (clojure.pprint/pprint result))
+         )
 
           (catch Exception e
             (clojure.pprint/pprint "===error")
@@ -189,12 +282,8 @@
           (finally
             (printf "/license level: %s%n" (get-global :level))))
 
-      (let [parse-tree (prscparser contractcode)]
-        (clojure.pprint/pprint (insta/transform prscparsertransform-options parse-tree)))
-))))
-
-
-
+        (let [parse-tree (prscparser contractcode)]
+          (clojure.pprint/pprint (insta/transform prscparsertransform-options parse-tree)))))))
 
 (defn format-for-json [k]
   (apply hash-map (assoc k 0 (keyword (clojure.string/replace (first k) #":\?" "")))))
@@ -202,12 +291,69 @@
 (def app
   (api
    {:api {:invalid-routes-fn nil}}
+   (context "/v2" []
+     :tags ["v2"]
+
+     (GET "/echo" []
+        :query-params [q :- String]
+        (try
+         (let [signtext (str "/echo" "$" q "$" q)]
+            (let [result {:?result  (Integer/parseInt q)}] 
+                (update-header (update-header (ok (format-for-json (first result))) "signtext"  (fn [arg] (-> signtext))) "sig"  (fn [arg] (-> (signature (apply str signtext)))))
+            )
+         )
+
+         (catch Exception e
+           (print e)
+           (ok (->> (ex-data e))))
+         (finally
+           (println "/echo response")))
+     )
+     (GET "/license/:address" []
+       :path-params [address :- String]
+       :query-params [licensetype :- String]
+       (try
+         (let [contractcode (fetchContractCodeWithrID address)]
+           (let [session (-> (mk-session 'prsc.core (load-user-rules contractcode))
+                             (insert
+                              (->license-type licensetype))
+                             (fire-rules))]
+             (let [result (query session get-license)]
+               (let [result-linkedcontracts (query session get-linked-Contracts)]
+                 (let [newmap (doall
+                               (map (fn [k]
+                                      (format-for-json k)) (first result)))]
+                   (let [signtext (for [{{address :address} :?receiver {type :type currency :currency price :price termtext :termtext} :?license} result]
+                                    (str "/license/" address "$" licensetype "$" "address,type,currency,price" address type currency price))]
+                     (update-header  (update-header (ok newmap) "signtext"  (fn [arg] (-> signtext))) "sig"  (fn [arg] (-> (signature (apply str signtext)))))))))))
+
+         (catch Exception e
+           (print e)
+           (ok (->> (ex-data e))))
+         (finally
+           (println "/license response"))))
+     (GET "/test" []
+       (ok (str "{'message':'ok'}")))
+     (GET "/parser" []
+       :query-params [address :- String]
+       (try
+         (let [contractcode (fetchContractCodeWithrID address)]
+           (let [parse-tree (prscparser contractcode)]
+             (when (insta/failure? parse-tree)
+               (throw (ex-info (print-str parse-tree) {:failure parse-tree})))
+             (ok (->> parse-tree (insta/transform prscparsertransform-options)))))
+
+         (catch Exception e
+           (ok (->> (ex-data e))))
+         (finally
+           (println "/parser response")))))
 
    (GET "/license/:address" []
      :path-params [address :- String]
      :query-params [licensetype :- String]
      (try
        (let [contractcode (fetchContractCodeWithrID address)]
+         (print contractcode)
          (let [session (-> (mk-session 'prsc.core (load-user-rules contractcode))
                            (insert
                             (->license-type licensetype))
@@ -237,6 +383,7 @@
            (ok (->> parse-tree (insta/transform prscparsertransform-options)))))
 
        (catch Exception e
+         (println e)
          (ok (->> (ex-data e))))
        (finally
          (println "/parser response"))))
